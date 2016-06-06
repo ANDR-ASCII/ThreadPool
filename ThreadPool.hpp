@@ -17,6 +17,7 @@ namespace BlackBox
 using namespace std::literals::chrono_literals;
 
 //=========================================================================================
+//=========================================================================================
 template <typename ReturnT>
 class ThreadPool
 {
@@ -134,7 +135,6 @@ public:
         {
             th = std::thread{&ThreadPool::Runnable, this};
             readyFlags_[th.get_id()] = true;
-            th.detach();
         }
     }
 
@@ -173,6 +173,15 @@ public:
         doAdd_ = false;
         condition_.notify_all();
         conveyerCondition_.notify_one();
+        asyncAdderWaiter_.get();
+
+        for(auto& t : threads_)
+        {
+            if(t.joinable())
+            {
+                t.join();
+            }
+        }
     }
 };
 //=========================================================================================
