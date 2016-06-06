@@ -173,16 +173,6 @@ public:
         doAdd_ = false;
         condition_.notify_all();
         conveyerCondition_.notify_one();
-
-        /*
-        // waits all threads for correct exit
-        for(auto& thread : threads_)
-        {
-            if(thread.joinable())
-            {
-                thread.join();
-            }
-        }*/
     }
 };
 //=========================================================================================
