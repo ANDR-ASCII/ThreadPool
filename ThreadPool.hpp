@@ -1,190 +1,316 @@
-#ifndef THREADPOOL_HPP_INCLUDED
-#define THREADPOOL_HPP_INCLUDED
+#ifndef THREAD_POOL_HPP_INCLUDED
+#define THREAD_POOL_HPP_INCLUDED
 
 #include <condition_variable>
-#include <iostream>
-#include <vector>
 #include <future>
 #include <thread>
 #include <mutex>
 #include <queue>
 #include <map>
-#include "StaticQueue.hpp"
+#include <stddef.h> /** for type size_t which out of namespace std */
 
-namespace BlackBox
+namespace black_box
 {
+//--------------------------------------------------------------
 
-using namespace std::literals::chrono_literals;
-
-//=========================================================================================
-//=========================================================================================
 template <typename ReturnT>
-class ThreadPool
+class thread_pool
 {
-    //###########################################################################
+    /** DATA AND INTERNAL DATA TYPES **/
 
-    size_t concurrency_;
-    std::vector<std::thread> threads_;
-    StaticQueue<std::packaged_task<ReturnT()>, 32> queue_;
-
-    // synchronization
-    // {
-            std::condition_variable condition_;
-            std::condition_variable threadReady_;
-            std::condition_variable conveyerCondition_;
-            std::future<void> asyncAdderWaiter_;
-
-            std::mutex conveyerMutex_;
-            std::mutex internalMutex_;              // for queue_
-            std::mutex modifyReadyFlag_;            // for readyFlags_
-
-            std::map<std::thread::id, bool> readyFlags_;
-            std::queue<std::packaged_task<ReturnT()>> conveyer_;
-
-            bool exitflag_;
-            bool doAdd_;
-    // }
-
-    //###########################################################################
-
-    void Runnable()
+    // releases only move semantic
+    struct task_wrapper
     {
-        while(true)
-        {
-            std::unique_lock<std::mutex> locker{internalMutex_};
-            condition_.wait(locker, [this]{ return !queue_.Empty() || exitflag_; });
+        //-------------------------------------------------------------------
+        std::packaged_task<ReturnT()> task_;
+        bool complete_signal_;
+        //-------------------------------------------------------------------
+    };
 
-            if(exitflag_)
-            {
-                break;
-            }
-
-            auto task = queue_.Pop();
-            locker.unlock();
-
-            {
-                // this thread is busy
-
-                std::lock_guard<std::mutex> flagLocker{modifyReadyFlag_};
-                readyFlags_[std::this_thread::get_id()] = false;
-            }
-
-            (*task)();
-
-            {
-                // this thread is ready to execute tasks
-
-                std::lock_guard<std::mutex> flagLocker{modifyReadyFlag_};
-                readyFlags_[std::this_thread::get_id()] = true;
-                threadReady_.notify_all();
-            }
-        }
-    }
-
-    void AsyncAdder()
+    struct thread_synchronization
     {
-        while(true)
-        {
-            std::unique_lock<std::mutex> conveyerLocker{conveyerMutex_};
-            conveyerCondition_.wait(conveyerLocker,
-                                    [this]{ return !conveyer_.empty() || !doAdd_; });
+        //-------------------------------------------------------------------
+        std::condition_variable condition_;
+        std::mutex mutable mutex_;
+        std::queue<task_wrapper> queue_;
+        //-------------------------------------------------------------------
+    };
 
-            if(doAdd_ == false)
-            {
-                break;
-            }
+    size_t                                          threads_number_;
+    std::vector <std::thread>                       threads_;
+    std::map    <size_t, thread_synchronization>    threads_synchronize_;
+    /**^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^**/
+    /**^^^^^^^^^^id of thread and synchronization variables^^^^^^^^^^^**/
 
-            auto task = std::move(conveyer_.front());
-            conveyer_.pop();
-            conveyerLocker.unlock();
-
-            // true if someone thread ready and queue not filled
-            auto compare =
-            [this]
-            {
-                return std::find_if(std::begin(readyFlags_), std::end(readyFlags_),
-                        [](std::pair<std::thread::id, bool> const& p)
-                        {
-                            return p.second;
-                        }) != std::end(readyFlags_) && !queue_.Filled();
-            };
-
-            std::unique_lock<std::mutex> flagLocker{modifyReadyFlag_};
-            threadReady_.wait(flagLocker, compare);
-            flagLocker.unlock();
-
-            std::unique_lock<std::mutex> locker{internalMutex_};
-            queue_.Push(std::move(task));
-            locker.unlock();
-            condition_.notify_one();
-        }
-    }
+    /** id == 0:
+    *
+    *   threads_[0] - thread
+    *   threads_synchronize_[0] - its own synchronization entities
+    *
+    **/
 
 public:
-    ThreadPool(size_t concurrency) :
-        concurrency_{concurrency},
-        threads_{concurrency_},
-        exitflag_{false},
-        doAdd_{true}
-    {
-        asyncAdderWaiter_
-            = std::async(std::launch::async, &ThreadPool::AsyncAdder, this);
 
-        // Run threads and suspend their
-        for(auto& th : threads_)
+    typedef std::shared_future<ReturnT> result_type;
+
+    thread_pool() : thread_pool{ std::thread::hardware_concurrency() }
+        { }
+
+    thread_pool(size_t threads_n):
+        threads_number_{ threads_n },
+        threads_{ threads_number_ }
+    {
+        for(size_t i = 0; i < threads_number_; ++i)
         {
-            th = std::thread{&ThreadPool::Runnable, this};
-            readyFlags_[th.get_id()] = true;
+            threads_synchronize_[i];
+            threads_[i] = std::thread{ &thread_pool::task_handler, this, i };
         }
     }
 
-    /********************************************//**
-     * \brief Add someone task to queue for execute
-     *
-     * \param func Some callable object (static function or function-member)
-     * \param pack Parameter pack for callable object
-     *
-     * \return Returns the shared future object
-     *           associated with the return-type of passed callable object
-     *
-     ***********************************************/
-
-    template <typename F, typename... Args>
-    std::shared_future<ReturnT> AddTask(F func, Args&&... pack)
+    ~thread_pool()
     {
-        // TODO:
-        // 1) To add the ability of transfer a function-member
-
-        auto callable = std::bind(func, std::forward<Args>(pack)...);
-        std::packaged_task<ReturnT()> newTask{callable};
-        std::shared_future<ReturnT> futureObject = newTask.get_future();
-
-        std::unique_lock<std::mutex> locker{conveyerMutex_};
-        conveyer_.push(std::move(newTask));
-
-        conveyerCondition_.notify_one();
-        locker.unlock();
-        return futureObject;
-    }
-
-    ~ThreadPool()
-    {
-        exitflag_ = true;
-        doAdd_ = false;
-        condition_.notify_all();
-        conveyerCondition_.notify_one();
-        asyncAdderWaiter_.get();
-
-        for(auto& t : threads_)
+        for(size_t i = 0; i < threads_number_; ++i)
         {
-            if(t.joinable())
+            complete_thread(i);
+
+            if(threads_[i].joinable())
             {
-                t.join();
+                threads_[i].join();
             }
         }
     }
-};
-//=========================================================================================
-} // end of namespace GeneticAlgorithm
 
-#endif // THREADPOOL_HPP_INCLUDED
+    template <typename F, typename... Args>
+    result_type add_task(F f, Args... params)
+    {
+        task_wrapper new_task = binder(f, std::forward<Args>(params)...);
+        result_type future_object = new_task.task_.get_future();
+        thread_synchronization& ts = find_minimum_load_queue();
+
+        std::unique_lock<std::mutex> locker{ ts.mutex_ };
+        put_task(ts, std::move(new_task), std::defer_lock);
+        ts.condition_.notify_one();
+        locker.unlock();
+
+        return future_object;
+    }
+
+private:
+
+    /** executes passed tasks */
+    void task_handler(size_t id)
+    {
+        for(;;)
+        {
+            //-------------------------------------------------------------------
+            thread_synchronization& ts = threads_synchronize_[id];
+            std::unique_lock<std::mutex> locker{ ts.mutex_ };
+            //-----------------------------------------------------------------
+            ts.condition_.wait(locker, [&ts]{ return !ts.queue_.empty(); });
+            auto callable = get_task(ts, std::defer_lock);
+            //-----------------------------------------------------------------
+            locker.unlock();
+
+            // first check
+            // if thread was slept and received the complete signal
+            if(callable.second.complete_signal_)
+            {
+                break;
+            }
+
+            // for correct exit from loop
+            bool double_check_complete = false;
+
+            // executes all tasks from queue
+            for(;;)
+            {
+                if(callable.first == false)
+                {
+                    break;
+                }
+
+                // double check
+                // if this thread works and gets the complete signal
+                // complete signal will be sent without valid packaged_task
+                // and if that task to attempt to execute
+                // the future_error exception will be thrown
+                if(callable.second.complete_signal_)
+                {
+                    double_check_complete = true;
+                    break;
+                }
+
+                callable.second.task_();
+                callable = get_task(ts);
+            }
+
+            // for correct exit from loop
+            if(double_check_complete)
+            {
+                break;
+            }
+        }
+    }
+
+    // send complete signal for specified thread
+    void complete_thread(size_t id)
+    {
+        thread_synchronization& ts = threads_synchronize_[id];
+
+        task_wrapper cs{ {}, true };
+        put_task(ts, std::move(cs));
+
+        ts.condition_.notify_one();
+    }
+
+    /** ATOMIC OPERATIONS **/
+    //*******************************************************************************
+    // pops the task with blocking
+    std::pair<bool, task_wrapper> get_task(thread_synchronization& ts)
+    {
+        std::lock_guard<std::mutex> locker{ ts.mutex_ };
+        bool success_flag = ts.queue_.size();
+        task_wrapper tw;
+
+        if(success_flag)
+        {
+            tw = std::move(ts.queue_.front());
+            ts.queue_.pop();
+        }
+
+        return std::make_pair(success_flag, std::move(tw));
+    }
+
+    // pops the task without blocking
+    std::pair<bool, task_wrapper> get_task(thread_synchronization& ts, std::defer_lock_t strategy)
+    {
+        (void)strategy;
+
+        bool success_flag = ts.queue_.size();
+        task_wrapper tw;
+
+        if(success_flag)
+        {
+            tw = std::move(ts.queue_.front());
+            ts.queue_.pop();
+        }
+
+        return std::make_pair(success_flag, std::move(tw));
+    }
+
+    void put_task(thread_synchronization& ts, task_wrapper tw)
+    {
+        std::lock_guard<std::mutex> locker{ ts.mutex_ };
+        ts.queue_.push(std::move(tw));
+    }
+
+    void put_task(thread_synchronization& ts, task_wrapper tw, std::defer_lock_t strategy)
+    {
+        std::unique_lock<std::mutex> locker{ ts.mutex_, strategy };
+        ts.queue_.push(std::move(tw));
+    }
+    //*******************************************************************************
+
+    /** HELPER FUNCTIONS **/
+
+    template <typename... Args>
+    task_wrapper binder(ReturnT(*pf)(Args...), Args&&... params)
+    {
+        //-------------------------------------------------------------------
+        auto new_callable_object = std::bind(pf, std::forward<Args>(params)...);
+        task_wrapper new_wrapper{ std::packaged_task<ReturnT()>{new_callable_object}, false };
+        //-------------------------------------------------------------------
+        return new_wrapper;
+    }
+
+    template <typename C, typename... Args>
+    task_wrapper binder(ReturnT(C::*pf)(Args...), Args... params)
+    {
+        //-------------------------------------------------------------------
+        auto pre_new_callable_object = function_member_wrapper(pf);
+        auto new_callable_object = std::bind(pre_new_callable_object,
+                                             std::forward<Args>(params)...);
+        //-------------------------------------------------------------------
+        task_wrapper new_wrapper{ std::packaged_task<ReturnT()>{new_callable_object}, false };
+        //-------------------------------------------------------------------
+        return new_wrapper;
+    }
+
+    template <typename C, typename... Args>
+    task_wrapper binder(ReturnT(C::*pf)(Args...) const, Args&&... params)
+    {
+        //-------------------------------------------------------------------
+        auto pre_new_callable_object = function_member_const_wrapper(pf);
+        auto new_callable_object = std::bind(pre_new_callable_object,
+                                             std::forward<Args>(params)...);
+        //-------------------------------------------------------------------
+        task_wrapper new_wrapper{ std::packaged_task<ReturnT()>{new_callable_object}, false };
+        //-------------------------------------------------------------------
+        return new_wrapper;
+    }
+
+    thread_synchronization& find_minimum_load_queue()
+    {
+        threads_synchronize_[0].mutex_.lock();
+        auto smallest = threads_synchronize_[0].queue_.size();
+        threads_synchronize_[0].mutex_.unlock();
+
+        size_t min_elem = 0;
+
+        for(size_t i = 1; i < threads_number_; ++i)
+        {
+            std::lock_guard<std::mutex> locker{ threads_synchronize_[i].mutex_ };
+            if(threads_synchronize_[i].queue_.size() < smallest)
+            {
+                smallest = threads_synchronize_[i].queue_.size();
+                min_elem = i;
+            }
+        }
+
+        return threads_synchronize_[min_elem];
+    }
+
+    void lock_all()
+    {
+        for(auto& p : threads_synchronize_)
+        {
+            p.second.mutex_.lock();
+        }
+    }
+
+    void unlock_all()
+    {
+        for(auto& p : threads_synchronize_)
+        {
+            p.second.mutex_.unlock();
+        }
+    }
+
+    /** FUNCTION MEMBER WRAPPERS */
+
+    //================================================================
+    // Requires support of C++14
+
+    template <typename R, typename C>
+    auto function_member_wrapper(R (C::*p))
+    {
+        return [=] (C& c, auto&&... pack)
+        {
+            return (c.*p)(std::forward<decltype(pack)>(pack)...);
+        };
+    }
+
+    template <typename R, typename C>
+    auto function_member_const_wrapper(R (C::*p))
+    {
+        return [=] (C const& c, auto&&... pack)
+        {
+            return (c.*p)(std::forward<decltype(pack)>(pack)...);
+        };
+    }
+    //================================================================
+};
+//--------------------------------------------------------------
+} // end of namespace BlackBox
+
+#endif // THREAD_POOL_HPP_INCLUDED
