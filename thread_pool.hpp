@@ -81,7 +81,7 @@ public:
     }
 
     template <typename F, typename... Args>
-    result_type add_task(F f, Args... params)
+    result_type add_task(F f, Args&&... params)
     {
         task_wrapper new_task = binder(f, std::forward<Args>(params)...);
         result_type future_object = new_task.task_.get_future();
@@ -206,7 +206,8 @@ private:
 
     void put_task(thread_synchronization& ts, task_wrapper tw, std::defer_lock_t strategy)
     {
-        std::unique_lock<std::mutex> locker{ ts.mutex_, strategy };
+        (void)strategy;
+
         ts.queue_.push(std::move(tw));
     }
     //*******************************************************************************
