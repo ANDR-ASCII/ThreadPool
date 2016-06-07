@@ -225,7 +225,7 @@ private:
     }
 
     template <typename C, typename... Args>
-    task_wrapper binder(ReturnT(C::*pf)(Args...), Args... params)
+    task_wrapper binder(ReturnT(C::*pf)(Args...), Args&&... params)
     {
         //-------------------------------------------------------------------
         auto pre_new_callable_object = function_member_wrapper(pf);
