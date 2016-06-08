@@ -27,6 +27,7 @@ class thread_pool
         //-------------------------------------------------------------------
     };
 
+    // releases only move semantic
     struct thread_synchronization
     {
         //-------------------------------------------------------------------
@@ -170,7 +171,7 @@ private:
     {
         std::lock_guard<std::mutex> locker{ ts.mutex_ };
         bool success_flag = ts.queue_.size();
-        task_wrapper tw;
+        task_wrapper tw{};
 
         if(success_flag)
         {
@@ -187,7 +188,7 @@ private:
         (void)strategy;
 
         bool success_flag = ts.queue_.size();
-        task_wrapper tw;
+        task_wrapper tw{};
 
         if(success_flag)
         {
@@ -214,37 +215,11 @@ private:
 
     /** HELPER FUNCTIONS **/
 
-    template <typename... Args>
-    task_wrapper binder(ReturnT(*pf)(Args...), Args&&... params)
+    template <typename F, typename... Args>
+    task_wrapper binder(F f, Args&&... params)
     {
         //-------------------------------------------------------------------
-        auto new_callable_object = std::bind(pf, std::forward<Args>(params)...);
-        task_wrapper new_wrapper{ std::packaged_task<ReturnT()>{new_callable_object}, false };
-        //-------------------------------------------------------------------
-        return new_wrapper;
-    }
-
-    template <typename C, typename... Args>
-    task_wrapper binder(ReturnT(C::*pf)(Args...), Args&&... params)
-    {
-        //-------------------------------------------------------------------
-        auto pre_new_callable_object = function_member_wrapper(pf);
-        auto new_callable_object = std::bind(pre_new_callable_object,
-                                             std::forward<Args>(params)...);
-        //-------------------------------------------------------------------
-        task_wrapper new_wrapper{ std::packaged_task<ReturnT()>{new_callable_object}, false };
-        //-------------------------------------------------------------------
-        return new_wrapper;
-    }
-
-    template <typename C, typename... Args>
-    task_wrapper binder(ReturnT(C::*pf)(Args...) const, Args&&... params)
-    {
-        //-------------------------------------------------------------------
-        auto pre_new_callable_object = function_member_const_wrapper(pf);
-        auto new_callable_object = std::bind(pre_new_callable_object,
-                                             std::forward<Args>(params)...);
-        //-------------------------------------------------------------------
+        auto new_callable_object = std::bind(f, std::forward<Args>(params)...);
         task_wrapper new_wrapper{ std::packaged_task<ReturnT()>{new_callable_object}, false };
         //-------------------------------------------------------------------
         return new_wrapper;
@@ -286,30 +261,6 @@ private:
             p.second.mutex_.unlock();
         }
     }
-
-    /** FUNCTION MEMBER WRAPPERS */
-
-    //================================================================
-    // Requires support of C++14
-
-    template <typename R, typename C>
-    auto function_member_wrapper(R (C::*p))
-    {
-        return [=] (C& c, auto&&... pack)
-        {
-            return (c.*p)(std::forward<decltype(pack)>(pack)...);
-        };
-    }
-
-    template <typename R, typename C>
-    auto function_member_const_wrapper(R (C::*p))
-    {
-        return [=] (C const& c, auto&&... pack)
-        {
-            return (c.*p)(std::forward<decltype(pack)>(pack)...);
-        };
-    }
-    //================================================================
 };
 //--------------------------------------------------------------
 } // end of namespace BlackBox
