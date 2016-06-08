@@ -1,14 +1,14 @@
-#ifndef STATICQUEUE_HPP_INCLUDED
-#define STATICQUEUE_HPP_INCLUDED
+#ifndef STATIC_QUEUE_HPP_INCLUDED
+#define STATIC_QUEUE_HPP_INCLUDED
 
 #include <type_traits>
 #include <memory>
 
-namespace BlackBox
+namespace black_box
 {
 //=========================================================================================
 template <typename T, size_t SIZE>
-class StaticQueue
+class static_queue
 {
     // FIFO model
 
@@ -19,13 +19,18 @@ class StaticQueue
 
 public:
 
+    typedef T value_type;
+    typedef T& reference;
+    typedef T const& const_reference;
+
+
     //**********************************************************************
 
-    class Iterator
+    class iterator
     {
         size_t desiredId_;
         size_t realIdElement_;
-        StaticQueue& aquireObject_;
+        static_queue& aquireObject_;
 
         void SetValue(size_t desired)
         {
@@ -38,8 +43,7 @@ public:
         }
 
     public:
-
-        Iterator(StaticQueue& q, size_t id):
+        iterator(static_queue& q, size_t id):
             desiredId_{id},
             realIdElement_{},
             aquireObject_{q}
@@ -49,59 +53,59 @@ public:
 
         //################################################################
 
-        T& operator*()
+        reference operator*()
         {
             return aquireObject_.internalArray_[realIdElement_];
         }
 
-        T& operator->()
+        reference operator->()
         {
             return aquireObject_.internalArray_[realIdElement_];
         }
 
-        T const& operator*() const
+        const_reference operator*() const
         {
             return aquireObject_.internalArray_[realIdElement_];
         }
 
-        T const& operator->() const
+        const_reference operator->() const
         {
             return aquireObject_.internalArray_[realIdElement_];
         }
 
         //################################################################
 
-        friend bool operator==(Iterator const& lhs, Iterator const& rhs)
+        friend bool operator==(iterator const& lhs, iterator const& rhs)
         {
             return lhs.desiredId_ == rhs.desiredId_ &&
                     &lhs.aquireObject_ == &rhs.aquireObject_;
         }
 
-        friend bool operator!=(Iterator const& lhs, Iterator const& rhs)
+        friend bool operator!=(iterator const& lhs, iterator const& rhs)
         {
             return !(lhs == rhs);
         }
 
-        Iterator& operator++()
+        iterator& operator++()
         {
             SetValue(desiredId_ + 1);
             return *this;
         }
 
-        Iterator& operator++(int)
+        iterator& operator++(int)
         {
             auto thisObject = *this;
             SetValue(desiredId_ + 1);
             return thisObject;
         }
 
-        Iterator& operator--()
+        iterator& operator--()
         {
             SetValue(desiredId_ - 1);
             return *this;
         }
 
-        Iterator& operator--(int)
+        iterator& operator--(int)
         {
             auto thisObject = *this;
             SetValue(desiredId_ - 1);
@@ -109,28 +113,28 @@ public:
         }
     };
 
-    StaticQueue(): first_{0}, last_{0}, count_{0} { }
+    static_queue(): first_{0}, last_{0}, count_{0} { }
 
     // copy/move semantics depends by T
-    StaticQueue(StaticQueue const&)             = default;
-    StaticQueue(StaticQueue&&)                  = default;
-    StaticQueue& operator=(StaticQueue const&)  = default;
-    StaticQueue& operator=(StaticQueue&&)       = default;
+    static_queue(static_queue const&)             = default;
+    static_queue(static_queue&&)                  = default;
+    static_queue& operator=(static_queue const&)  = default;
+    static_queue& operator=(static_queue&&)       = default;
     // the class can be inherited
-    virtual ~StaticQueue()                      = default;
+    virtual ~static_queue()                      = default;
 
-    Iterator        begin  ()          { return Iterator(*this, 0); }
-    Iterator const  begin  ()  const   { return Iterator(*this, 0); }
-    Iterator const  cbegin ()  const   { return Iterator(*this, 0); }
-    Iterator        end    ()          { return Iterator(*this, count_); }
-    Iterator const  end    ()  const   { return Iterator(*this, count_); }
-    Iterator const  cend   ()  const   { return Iterator(*this, count_); }
+    iterator        begin  ()          { return iterator(*this, 0); }
+    iterator const  begin  ()  const   { return iterator(*this, 0); }
+    iterator const  cbegin ()  const   { return iterator(*this, 0); }
+    iterator        end    ()          { return iterator(*this, count_); }
+    iterator const  end    ()  const   { return iterator(*this, count_); }
+    iterator const  cend   ()  const   { return iterator(*this, count_); }
 
     //**********************************************************************
 
     // copy assignable version
-    bool Push(T const& lobject) volatile
-        noexcept(std::is_nothrow_copy_assignable<T>::value)
+    bool push(const_reference lobject)
+        noexcept(std::is_nothrow_copy_assignable<value_type>::value)
     {
         if(count_ < SIZE)
         {
@@ -148,8 +152,8 @@ public:
     // move assignable version
     // if T is not move assignable then called copy assignable
     // if T is not copy assignable then will be error
-    bool Push(T&& robject)
-         noexcept(std::is_nothrow_move_assignable<T>::value)
+    bool push(value_type&& robject)
+         noexcept(std::is_nothrow_move_assignable<value_type>::value)
     {
         if(count_ < SIZE)
         {
@@ -164,8 +168,8 @@ public:
         return false;
     }
 
-    bool Pop(T& value)
-        noexcept(std::is_nothrow_copy_assignable<T>::value)
+    bool pop(reference value)
+        noexcept(std::is_nothrow_copy_assignable<value_type>::value)
     {
         if(count_)
         {
@@ -180,39 +184,39 @@ public:
         return false;
     }
 
-    std::shared_ptr<T> Pop()
+    std::shared_ptr<value_type> pop()
         noexcept(std::is_nothrow_copy_assignable<T>::value)
     {
         if(count_)
         {
-            std::shared_ptr<T> temporary =
-                std::make_shared<T>(std::move_if_noexcept(internalArray_[first_]));
+            std::shared_ptr<value_type> temporary =
+                std::make_shared<value_type>(std::move_if_noexcept(internalArray_[first_]));
 
             first_ = (first_ + 1) % SIZE;
             --count_;
             return temporary;
         }
 
-        return std::shared_ptr<T>{nullptr};
+        return std::shared_ptr<value_type>{ nullptr };
     }
 
-    bool Empty() const
+    bool empty() const
     {
         return !count_;
     }
 
-    bool Filled() const
+    bool full() const
     {
         return count_ == SIZE;
     }
 
-    size_t Size() const
+    size_t size() const
     {
         return count_;
     }
 };
 //=========================================================================================
-} // end of namespace GeneticAlgorithm
+} // end of namespace black_box
 
 
-#endif // STATICQUEUE_HPP_INCLUDED
+#endif // STATIC_QUEUE_HPP_INCLUDED
