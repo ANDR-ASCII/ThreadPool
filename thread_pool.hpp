@@ -245,22 +245,6 @@ private:
 
         return threads_synchronize_[min_elem];
     }
-
-    void lock_all()
-    {
-        for(auto& p : threads_synchronize_)
-        {
-            p.second.mutex_.lock();
-        }
-    }
-
-    void unlock_all()
-    {
-        for(auto& p : threads_synchronize_)
-        {
-            p.second.mutex_.unlock();
-        }
-    }
 };
 //--------------------------------------------------------------
 } // end of namespace BlackBox
