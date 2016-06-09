@@ -171,7 +171,7 @@ private:
     {
         std::lock_guard<std::mutex> locker{ ts.mutex_ };
         bool success_flag = ts.queue_.size();
-        task_wrapper tw{};
+        task_wrapper tw{ {}, false };
 
         if(success_flag)
         {
@@ -188,7 +188,7 @@ private:
         (void)strategy;
 
         bool success_flag = ts.queue_.size();
-        task_wrapper tw{};
+        task_wrapper tw{ {}, false };
 
         if(success_flag)
         {
@@ -208,7 +208,6 @@ private:
     void put_task(thread_synchronization& ts, task_wrapper tw, std::defer_lock_t strategy)
     {
         (void)strategy;
-
         ts.queue_.push(std::move(tw));
     }
     //*******************************************************************************
